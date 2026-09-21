@@ -2,10 +2,14 @@ import networkx as nx
 import random
 import pandas as pd
 
-def generate_mock_data(num_snapshots=10, num_nodes=200):
+def generate_mock_data(num_snapshots=10, num_nodes=200, seed=42):
     """
     Generates mock dynamic graphs, community partitions, and user labels.
-    
+
+    Args:
+        seed (int | None): Fixes the RNG so a run reproduces exactly.
+            Pass None to draw a fresh random network each time.
+
     Returns:
         snapshots (list): List of networkx graphs.
         communities_over_time (list): List of dicts {comm_id: [nodes]}.
@@ -13,7 +17,10 @@ def generate_mock_data(num_snapshots=10, num_nodes=200):
         user_ground_truth (dict): Full ground truth {node_id: label}.
     """
     print("Generating mock data...")
-    
+
+    if seed is not None:
+        random.seed(seed)
+
     # 1. User Labels (Ground Truth)
     # 0: Normal, 1: Fake
     # Assume 30% users are fake spreaders to ensure positive samples

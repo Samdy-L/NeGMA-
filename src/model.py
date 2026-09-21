@@ -1,6 +1,8 @@
 from sklearn.linear_model import LogisticRegressionCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
+import json
+import os
 import pandas as pd
 import numpy as np
 
@@ -48,7 +50,19 @@ class CommunityClassifier:
         clf = self.model.named_steps['logisticregressioncv']
         print("Model trained.")
         print(f"Best C: {clf.C_[0]}")
-        print(f"Coefficients: {dict(zip(self.features, clf.coef_[0]))}")
+        coef_map = dict(zip(self.features, clf.coef_[0]))
+        print(f"Coefficients: {coef_map}")
+
+        # Persist them, so visualization.py can plot feature importance from the
+        # coefficients the model actually learned.
+        coef_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'model_coefficients.json')
+        os.makedirs(os.path.dirname(coef_path), exist_ok=True)
+        with open(coef_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'coefficients': {k: float(v) for k, v in coef_map.items()},
+                'best_C': float(clf.C_[0]),
+            }, f, indent=2)
+        print(f"Coefficients saved to: {coef_path}")
         
     def predict(self, df):
         """

@@ -1,8 +1,25 @@
+"""
+Visualization for the community-level fake-information detection experiment.
+
+Every figure produced here is drawn from real experiment output. No simulated,
+interpolated, or hard-coded curves are used.
+
+Inputs (all written by `python main.py`):
+    data/experiment_results.csv    held-out test-set predictions and ground truth
+    data/model_coefficients.json   coefficients of the actually-trained classifier
+    data/community_evolution.csv   per-(community, snapshot) feature detail
+
+Run `python main.py` first, then `python src/visualization.py`.
+"""
+import json
+import os
+
+import matplotlib
+matplotlib.use('Agg')  # headless backend; this script only writes files
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_curve, auc
-import os
 
 # Set style for academic plots
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -15,198 +32,149 @@ plt.rcParams['ytick.labelsize'] = 12
 plt.rcParams['legend.fontsize'] = 12
 plt.rcParams['figure.titlesize'] = 18
 
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'plots')
+BASE_DIR = os.path.join(os.path.dirname(__file__), '..')
+DATA_DIR = os.path.join(BASE_DIR, 'data')
+OUTPUT_DIR = os.path.join(BASE_DIR, 'plots')
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 
+RESULTS_CSV = os.path.join(DATA_DIR, 'experiment_results.csv')
+COEF_JSON = os.path.join(DATA_DIR, 'model_coefficients.json')
+EVOLUTION_CSV = os.path.join(DATA_DIR, 'community_evolution.csv')
+
+
+def _require(path):
+    """Fail loudly rather than silently drawing something that isn't measured."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Missing {os.path.relpath(path, BASE_DIR)} - "
+            f"run `python main.py` first to generate the experiment data."
+        )
+    return path
+
+
 def plot_roc_comparison():
     """
-    Generates ROC Curve comparison: Two-Stage Framework vs. Single Logistic Regression.
-    Simulated data to match the description: AUC diff ~ 0.06.
+    ROC curve on the held-out test set, computed from the saved predictions.
+
+    Note: the rule stage rarely fires on this dataset, so this curve is in
+    practice the logistic-regression branch of the two-stage framework.
     """
+    df = pd.read_csv(_require(RESULTS_CSV))
+    y_true = df['ground_truth_label'].to_numpy()
+    y_score = df['predicted_probability'].to_numpy()
+
+    if len(np.unique(y_true)) < 2:
+        print("Test set contains only one class - ROC is undefined, skipping.")
+        return
+
+    fpr, tpr, _ = roc_curve(y_true, y_score)
+    roc_auc = auc(fpr, tpr)
+
+    n_rule = int(df['rule_flag'].sum())
+    print(f"  rule stage fired on {n_rule}/{len(df)} test communities")
+
     plt.figure(figsize=(8, 6))
-    
-    # Simulate ROC data
-    fpr = np.linspace(0, 1, 100)
-    
-    # Single LR Model (Baseline) - AUC ~ 0.78
-    tpr_baseline = 1 - np.exp(-4 * fpr) # Simple exponential curve
-    tpr_baseline = np.clip(tpr_baseline, 0, 1)
-    roc_auc_baseline = auc(fpr, tpr_baseline)
-    
-    # Two-Stage Framework (Proposed) - AUC ~ 0.84 (0.78 + 0.06)
-    # Make it strictly better
-    tpr_proposed = 1 - np.exp(-6 * fpr)
-    tpr_proposed = np.clip(tpr_proposed, 0, 1)
-    roc_auc_proposed = auc(fpr, tpr_proposed)
-    
-    plt.plot(fpr, tpr_proposed, color='#d62728', lw=2.5, 
-             label=f'Two-Stage Framework (AUC = {roc_auc_proposed:.2f})')
-    plt.plot(fpr, tpr_baseline, color='#1f77b4', lw=2, linestyle='--', 
-             label=f'Single Logistic Regression (AUC = {roc_auc_baseline:.2f})')
-    
-    plt.plot([0, 1], [0, 1], color='gray', lw=1, linestyle=':')
-    
+    plt.plot(fpr, tpr, color='#d62728', lw=2.5,
+             label=f'Two-Stage Framework (AUC = {roc_auc:.3f})')
+    plt.plot([0, 1], [0, 1], color='gray', lw=1, linestyle=':',
+             label='Random baseline (AUC = 0.500)')
+
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
-    plt.title('ROC Curve Comparison')
+    plt.title(f'ROC on Test Communities (n = {len(df)})')
     plt.legend(loc="lower right")
     plt.grid(True, alpha=0.3)
-    
+
     plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, 'roc_comparison.png'), dpi=300)
-    print(f"Saved ROC plot to {OUTPUT_DIR}/roc_comparison.png")
+    out = os.path.join(OUTPUT_DIR, 'roc_comparison.png')
+    plt.savefig(out, dpi=300)
+    plt.close()
+    print(f"Saved ROC plot to {out}")
+
 
 def plot_feature_importance():
     """
-    Generates Feature Importance Bar Chart.
-    Top 3: Internal Density (0.32), Formation Speed (0.28), Isolation Degree (0.21).
+    Feature importance from the coefficients of the trained classifier.
+
+    Signed coefficients are plotted, so the direction of each feature's effect
+    is visible. Source: data/model_coefficients.json, written by model.train().
     """
-    features = [
-        'Internal Density', 'Formation Speed', 'Isolation Degree', 
-        'Member Stability', 'Community Size', 'Avg Internal Degree', 
-        'Internal Weight Sum', 'Weight Variance'
-    ]
-    # Weights matching description + some filler for others
-    weights = [0.32, 0.28, 0.21, 0.12, 0.08, 0.05, 0.03, 0.01]
-    
-    # Sort for better visualization
-    # Create dataframe
-    df = pd.DataFrame({'Feature': features, 'Weight': weights})
-    df = df.sort_values('Weight', ascending=True)
-    
+    with open(_require(COEF_JSON), encoding='utf-8') as f:
+        payload = json.load(f)
+
+    df = pd.DataFrame({
+        'Feature': list(payload['coefficients'].keys()),
+        'Coefficient': list(payload['coefficients'].values()),
+    })
+    df['Abs'] = df['Coefficient'].abs()
+    df = df.sort_values('Abs', ascending=True)
+
     plt.figure(figsize=(10, 6))
-    
-    # Create horizontal bar chart
-    bars = plt.barh(df['Feature'], df['Weight'], color='#2ca02c', alpha=0.8)
-    
-    # Add value labels
+    bars = plt.barh(df['Feature'], df['Coefficient'], color='#2ca02c', alpha=0.8)
+
     for bar in bars:
         width = bar.get_width()
-        plt.text(width + 0.005, bar.get_y() + bar.get_height()/2, 
-                 f'{width:.2f}', va='center', fontsize=10)
-    
-    plt.xlabel('Coefficient Weight (Absolute Value)')
-    plt.title('Feature Importance in Logistic Regression')
+        offset = 0.01 if width >= 0 else -0.01
+        plt.text(width + offset, bar.get_y() + bar.get_height() / 2,
+                 f'{width:+.3f}', va='center',
+                 ha='left' if width >= 0 else 'right', fontsize=10)
+
+    plt.axvline(0, color='black', lw=0.8)
+    plt.xlabel('Logistic Regression Coefficient (standardized features)')
+    plt.title(f'Feature Importance (best C = {payload["best_C"]:.4g})')
     plt.grid(axis='x', alpha=0.3)
-    
+
     plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, 'feature_importance.png'), dpi=300)
-    print(f"Saved Feature Importance plot to {OUTPUT_DIR}/feature_importance.png")
+    out = os.path.join(OUTPUT_DIR, 'feature_importance.png')
+    plt.savefig(out, dpi=300)
+    plt.close()
+    print(f"Saved Feature Importance plot to {out}")
+
 
 def plot_community_evolution():
     """
-    Generates Community Evolution Trajectory (Size & Density).
-    Fake Community: Snapshot 3-4 rapid rise (Size 5->22, Density 0.3->0.75).
-    Normal Community: Stable (Size 15-18, Density 0.4-0.5).
+    Community size and internal density across snapshots, grouped by target.
+
+    Bands show the min-max range over communities within each group.
+    Source: data/community_evolution.csv (all 10 snapshots x 10 communities).
     """
-    snapshots = np.arange(1, 11)
-    
-    # Fake Community Data
-    # Rapid rise at t=3, 4
-    fake_size = [5, 6, 12, 22, 23, 21, 20, 19, 18, 15]
-    fake_density = [0.30, 0.32, 0.55, 0.75, 0.78, 0.76, 0.74, 0.72, 0.70, 0.65]
-    
-    # Normal Community Data
-    # Stable evolution
-    normal_size = [15, 16, 15, 17, 18, 17, 16, 16, 15, 16]
-    normal_density = [0.42, 0.45, 0.43, 0.48, 0.50, 0.49, 0.46, 0.44, 0.43, 0.45]
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-    
-    # Plot 1: Size Evolution
-    ax1.plot(snapshots, fake_size, marker='o', color='#d62728', lw=2, label='Fake Community')
-    ax1.plot(snapshots, normal_size, marker='s', color='#1f77b4', lw=2, label='Normal Community')
-    ax1.set_xlabel('Snapshot ID')
-    ax1.set_ylabel('Community Size (Nodes)')
-    ax1.set_title('Evolution of Community Size')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    
-    # Highlight the rapid rise area
-    ax1.axvspan(3, 4, color='yellow', alpha=0.2, label='Rapid Formation Phase')
-    
-    # Plot 2: Density Evolution
-    ax2.plot(snapshots, fake_density, marker='o', color='#d62728', lw=2, label='Fake Community')
-    ax2.plot(snapshots, normal_density, marker='s', color='#1f77b4', lw=2, label='Normal Community')
-    ax2.set_xlabel('Snapshot ID')
-    ax2.set_ylabel('Internal Density')
-    ax2.set_title('Evolution of Internal Density')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    
-    ax2.axvspan(3, 4, color='yellow', alpha=0.2)
+    df = pd.read_csv(_require(EVOLUTION_CSV))
+
+    panels = [
+        ('community_size', 'Community Size (Nodes)', 'Evolution of Community Size'),
+        ('internal_density', 'Internal Density', 'Evolution of Internal Density'),
+    ]
+    groups = [(1, '#d62728', 'Fake-dominant (target = 1)'),
+              (0, '#1f77b4', 'Normal (target = 0)')]
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    for ax, (column, ylabel, title) in zip(axes, panels):
+        for target, color, name in groups:
+            sub = df[df['target'] == target]
+            if sub.empty:
+                continue
+            stats = sub.groupby('snapshot_id')[column].agg(['mean', 'min', 'max'])
+            ax.plot(stats.index, stats['mean'], marker='o', color=color, lw=2, label=name)
+            ax.fill_between(stats.index, stats['min'], stats['max'], color=color, alpha=0.12)
+
+        ax.set_xlabel('Snapshot ID')
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, 'community_evolution.png'), dpi=300)
-    print(f"Saved Evolution plot to {OUTPUT_DIR}/community_evolution.png")
+    out = os.path.join(OUTPUT_DIR, 'community_evolution.png')
+    plt.savefig(out, dpi=300)
+    plt.close()
+    print(f"Saved Evolution plot to {out}")
 
-def plot_radar_chart():
-    """
-    Generates Radar Chart for Algorithm Comparison.
-    Metrics: Modularity, NMI, Temporal Smoothness.
-    Scenarios: Noise, Morphing, Disruptive.
-    Focus: NeGMA best in Morphing, balanced in others.
-    """
-    # Since radar charts usually compare metrics for ONE entity or entities for ONE metric set,
-    # and we have 3 scenarios x 3 metrics x 4 algorithms, it's complex.
-    # Let's simplify: Show performance in Morphing Scenario (the focus) across 3 metrics.
-    # Or show NeGMA's performance across 3 scenarios relative to others.
-    
-    # Let's implement the request: "In Morphing scenario, NeGMA is best."
-    # We will plot 3 metrics for the Morphing Scenario.
-    
-    labels = np.array(['Modularity', 'NMI', 'Temporal Smoothness'])
-    num_vars = len(labels)
-    
-    # Data for Morphing Scenario (Normalized 0-1 for radar chart)
-    # NeGMA: Best in all
-    negma_scores = [0.85, 0.82, 0.88]
-    
-    # s-GMA: Good smoothness, lower NMI
-    sgma_scores = [0.75, 0.70, 0.85]
-    
-    # alpha-GMA: Good modularity, lower smoothness
-    alpha_gma_scores = [0.80, 0.75, 0.70]
-    
-    # Independent GMA: Poor smoothness
-    ind_gma_scores = [0.78, 0.65, 0.40]
-    
-    angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
-    angles += angles[:1] # Close the loop
-    
-    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
-    
-    # Helper to close the loop
-    def add_plot(scores, color, label):
-        s = scores + scores[:1]
-        ax.plot(angles, s, color=color, linewidth=2, label=label)
-        ax.fill(angles, s, color=color, alpha=0.1)
-        
-    add_plot(negma_scores, '#d62728', 'NeGMA (Proposed)')
-    add_plot(sgma_scores, '#2ca02c', 's-GMA')
-    add_plot(alpha_gma_scores, '#ff7f0e', 'α-GMA')
-    add_plot(ind_gma_scores, '#1f77b4', 'Independent GMA')
-    
-    ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(labels, size=12)
-    
-    # Set y-limits
-    ax.set_ylim(0, 1)
-    ax.set_yticks([0.2, 0.4, 0.6, 0.8])
-    ax.set_yticklabels(['0.2', '0.4', '0.6', '0.8'], color="grey", size=10)
-    
-    plt.title('Algorithm Performance in Morphing Scenario', y=1.08)
-    plt.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, 'radar_comparison.png'), dpi=300)
-    print(f"Saved Radar Chart to {OUTPUT_DIR}/radar_comparison.png")
 
 if __name__ == "__main__":
     plot_roc_comparison()
     plot_feature_importance()
     plot_community_evolution()
-    plot_radar_chart()

@@ -1,0 +1,13 @@
+{
+  "coefficients": {
+    "community_size": 0.47623701479677416,
+    "internal_weight_sum": 3.885715323138331,
+    "internal_density": 2.9961889871016547,
+    "formation_speed": 0.31653489465382484,
+    "isolation_degree": -1.5151426246046702,
+    "member_stability": 0.35273047658493356,
+    "avg_internal_degree": -8.01284664059544,
+    "internal_edge_weight_var": 0.0
+  },
+  "best_C": 166.81005372000558
+}

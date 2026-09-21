@@ -75,5 +75,11 @@ def main():
     output_df.to_csv(output_path, index=False)
     print(f"\nResults saved to: {output_path}")
 
+    # Save the full (community, snapshot) detail. visualization.py draws the
+    # evolution trajectories from this file.
+    evolution_path = os.path.join(os.path.dirname(__file__), 'data', 'community_evolution.csv')
+    full_df.to_csv(evolution_path, index=False)
+    print(f"Community detail saved to: {evolution_path}")
+
 if __name__ == "__main__":
     main()
